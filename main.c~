@@ -1,0 +1,234 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdint.h>
+#include <string.h>
+#include <getopt.h>
+
+char DEBUG = 0;
+char* MESSAGE = NULL;
+
+void print_usage()
+{
+    printf("Usage: ./md5 -m message [OPTION]\n");
+    printf("   or: ./md5 [OPTION] -m message\n");
+    printf("MD5 function generates a has given some message\n\n");
+    printf("Mandatory Arguments:\n");
+    printf("   -m message      message = the message to be hashed\n\n");
+    printf("Optional Arguments:\n");
+    printf("   -d              debug = enable debug feedback\n\n");
+}
+
+#define F(x, y, z) ((x & y) | (~x & z))
+#define G(x, y, z) ((x & z) | (y & (~z)))
+#define H(x, y, z) (x ^ y ^ z )
+#define I(x, y, z) (y ^ (x | ~z))
+#define circular_shift_left(x, c) (((x) << (c)) | ((x) >> (32 - (c))))
+
+char* gen_md5(uint8_t *initial_message, size_t initial_length)
+{
+    if(DEBUG) printf("Initial message: '%s' with length (char): %zu with length (binary): %zu\n",
+                     initial_message, initial_length, initial_length*8);
+
+//Step one, determine and append padding
+    //pad_len -> (init_len + pad+len + 64) % 512 = 0
+    size_t pad_len = (initial_length*8)%512;            //convert to binary length, catch the remainder on 512
+    if(pad_len > 448) pad_len = 1024 - pad_len;         //(512 - pad_len) + 512;
+    else pad_len = 448 - pad_len;
+    size_t total_len = initial_length*8 + pad_len + 64;    //store in variable in case total_len > 512
+
+    if(DEBUG) printf("\n| msg_len: %zu | pad_len: %zu | 64 bits |  |total len: %zu |\n\n",
+                     initial_length*8, pad_len, total_len);
+
+    uint8_t* message = calloc(total_len, 1);   //generate pad to be concatenated to actual message
+
+    memcpy(message, initial_message, initial_length);   //fill message array with actual initial message contents
+    message[initial_length] = 128;                      //first position after message, fill with 1
+
+    uint32_t M[total_len/32];                           //total_len/32 = (total_len / 512) * 16
+                                                        // = num partitions of message * 16 blocks per partition
+    for(int i=0; i<total_len/32; i++)
+    {
+        memcpy(M + i, message + i*4, 4);
+        //printf("%i: %X %X%X%X%X\n",i, *(M+i), *(message + i*4+3),*(message + i*4+2),*(message + i*4+1),*(message + i*4));
+    }
+
+    uint32_t A = 0x67452301,
+             B = 0xEFCDAB89,
+             C = 0x98BADCFE,
+             D = 0x10325476,
+            //sin function values pre-computed
+            T[] = {
+            0xd76aa478, 0xe8c7b756, 0x242070db, 0xc1bdceee,
+            0xf57c0faf, 0x4787c62a, 0xa8304613, 0xfd469501,
+            0x698098d8, 0x8b44f7af, 0xffff5bb1, 0x895cd7be,
+            0x6b901122, 0xfd987193, 0xa679438e, 0x49b40821,
+            0xf61e2562, 0xc040b340, 0x265e5a51, 0xe9b6c7aa,
+            0xd62f105d, 0x02441453, 0xd8a1e681, 0xe7d3fbc8,
+            0x21e1cde6, 0xc33707d6, 0xf4d50d87, 0x455a14ed,
+            0xa9e3e905, 0xfcefa3f8, 0x676f02d9, 0x8d2a4c8a,
+            0xfffa3942, 0x8771f681, 0x6d9d6122, 0xfde5380c,
+            0xa4beea44, 0x4bdecfa9, 0xf6bb4b60, 0xbebfbc70,
+            0x289b7ec6, 0xeaa127fa, 0xd4ef3085, 0x04881d05,
+            0xd9d4d039, 0xe6db99e5, 0x1fa27cf8, 0xc4ac5665,
+            0xf4292244, 0x432aff97, 0xab9423a7, 0xfc93a039,
+            0x655b59c3, 0x8f0ccc92, 0xffeff47d, 0x85845dd1,
+            0x6fa87e4f, 0xfe2ce6e0, 0xa3014314, 0x4e0811a1,
+            0xf7537e82, 0xbd3af235, 0x2ad7d2bb, 0xeb86d391};
+            //determine portion of message to be used at this iteration
+            char X[] = {
+            0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,   //round 1
+            1, 6, 11, 0, 5, 10, 15, 4, 9, 14, 3, 8, 13, 2, 7, 12,   //round 2
+            5, 8, 11, 14, 1, 4, 7, 10, 13, 0, 3, 6, 9, 12, 15, 2,   //round 3
+            0, 7, 14, 5, 12, 3, 10, 1, 8, 15, 6, 13, 4, 11, 2, 9},  //round 4
+            //circular shift bits array
+            S[] = {
+            7, 12, 17, 22,      //round 1
+            5, 9, 14, 20,       //round 2
+            4, 11, 16, 23,      //round 3
+            6, 10, 15, 21};     //round 4
+
+    uint32_t temp;
+    //Round 1
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + F(B, C, D) + message[0] + T[0], S[0]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + F(B, C, D) + message[1] + T[1], S[0]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + F(B, C, D) + message[2] + T[2], S[0]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + F(B, C, D) + message[3] + T[3], S[0]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + F(B, C, D) + message[4] + T[4], S[1]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + F(B, C, D) + message[5] + T[5], S[1]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + F(B, C, D) + message[6] + T[6], S[1]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + F(B, C, D) + message[7] + T[7], S[1]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + F(B, C, D) + message[8] + T[8], S[2]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + F(B, C, D) + message[9] + T[9], S[2]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + F(B, C, D) + message[10] + T[10], S[2]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + F(B, C, D) + message[11] + T[11], S[2]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + F(B, C, D) + message[12] + T[12], S[3]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + F(B, C, D) + message[13] + T[13], S[3]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + F(B, C, D) + message[14] + T[14], S[3]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + F(B, C, D) + message[15] + T[15], S[3]); A = temp;
+    //Round 2
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + G(B, C, D) + message[1] + T[16], S[4]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + G(B, C, D) + message[6] + T[17], S[4]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + G(B, C, D) + message[11] + T[18], S[4]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + G(B, C, D) + message[0] + T[19], S[4]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + G(B, C, D) + message[5] + T[20], S[5]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + G(B, C, D) + message[10] + T[21], S[5]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + G(B, C, D) + message[15] + T[22], S[5]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + G(B, C, D) + message[4] + T[23], S[5]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + G(B, C, D) + message[9] + T[24], S[6]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + G(B, C, D) + message[14] + T[25], S[6]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + G(B, C, D) + message[3] + T[26], S[6]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + G(B, C, D) + message[8] + T[27], S[6]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + G(B, C, D) + message[13] + T[28], S[7]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + G(B, C, D) + message[2] + T[29], S[7]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + G(B, C, D) + message[7] + T[31], S[7]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + G(B, C, D) + message[12] + T[31], S[7]); A = temp;
+    //Round 3
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + H(B, C, D) + message[5] + T[32], S[8]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + H(B, C, D) + message[8] + T[33], S[8]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + H(B, C, D) + message[11] + T[34], S[8]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + H(B, C, D) + message[14] + T[35], S[8]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + H(B, C, D) + message[1] + T[36], S[9]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + H(B, C, D) + message[4] + T[37], S[9]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + H(B, C, D) + message[7] + T[38], S[9]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + H(B, C, D) + message[10] + T[39], S[9]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + H(B, C, D) + message[13] + T[40], S[10]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + H(B, C, D) + message[0] + T[41], S[10]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + H(B, C, D) + message[3] + T[42], S[10]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + H(B, C, D) + message[6] + T[43], S[10]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + H(B, C, D) + message[9] + T[44], S[11]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + H(B, C, D) + message[12] + T[45], S[11]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + H(B, C, D) + message[15] + T[46], S[11]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + H(B, C, D) + message[2] + T[47], S[11]); A = temp;
+    //Round 4
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + I(B, C, D) + message[0] + T[48], S[12]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + I(B, C, D) + message[7] + T[49], S[12]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + I(B, C, D) + message[14] + T[50], S[12]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + I(B, C, D) + message[5] + T[51], S[12]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + I(B, C, D) + message[12] + T[52], S[13]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + I(B, C, D) + message[3] + T[53], S[13]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + I(B, C, D) + message[10] + T[54], S[13]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + I(B, C, D) + message[1] + T[55], S[13]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + I(B, C, D) + message[8] + T[56], S[14]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + I(B, C, D) + message[15] + T[57], S[14]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + I(B, C, D) + message[6] + T[58], S[14]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + I(B, C, D) + message[13] + T[59], S[14]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + I(B, C, D) + message[4] + T[60], S[15]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + I(B, C, D) + message[11] + T[61], S[15]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + I(B, C, D) + message[2] + T[62], S[15]); A = temp;
+    temp = D; D = C; C = B; B = B + circular_shift_left(A + I(B, C, D) + message[9] + T[63], S[15]); A = temp;
+
+
+
+    /*
+    for(int j=0; j<4; j++)          //for each round
+    {
+        for (int k = 0; k < 16; k++)    //for each iteration in the loop
+        {
+            uint32_t func;
+            if (j == 0) { func = F(B, C, D), S[j * 4 + k % 4]; }
+            else if (j == 1) { func = G(B, C, D), S[j * 4 + k % 4]; }
+            else if (j == 2) { func = H(B, C, D), S[j * 4 + k % 4]; }
+            else { func = I(B, C, D), S[j * 4 + k % 4]; }
+
+            if (DEBUG)
+                //printf("Iteration %i: %x + %x + %x + %x, %i\n", j * 16 + k, A, func, T[j * 16 + k], M[X[j * 4 + k]], S[j*4 + k%4]);
+                printf("%i: %X %X %X %X\n", j*16+k, A, B, C, D);
+
+            temp = D;
+            D = C;
+            C = B;
+            B = B + circular_shift_left(A + func + X[k] + T[j * 16 + k] + M[X[j * 4 + k]], S[j * 4 + k % 4]);
+            A = temp;
+
+        }
+    }
+     */
+
+    printf("generated hash: %x %x %x %x\n", A, B, C, D);
+    printf(" expected hash: 5f4dcc3b 5aa765d6 1d8327de b882cf99\n");
+    if((A == 0x5f4dcc3b) && (B == 0x5aa765d6) && (C == 0x1d8327de) && (D == 0xb882cf99))
+        printf("Found a match!\n");
+    else
+        printf("MD5 did not match\n");
+
+    return "something";
+}
+
+//54521239 6F5E7A1D 48D131D6 B0E30A3A
+
+int main(int argc, char* argv[])
+{
+    //parse command line arguments
+    char c;
+    while((c = getopt(argc, argv, "dm:")) != -1)
+    {
+        switch(c)
+        {
+            case 'd':
+                DEBUG = 1;
+                break;
+
+            case 'm':
+                MESSAGE = optarg;
+                break;
+
+            default:
+                printf("Invalid argument.\n\n");
+                print_usage();
+                return 1;
+        }
+    }
+    if(MESSAGE == NULL)
+    {
+        printf("No message received.\n\n");
+        print_usage();
+        return 1;
+    }
+
+    //generate hash function
+    char* hash = gen_md5(MESSAGE, strlen(MESSAGE));
+
+    printf("%s\n", hash);
+
+    return 0;
+}
